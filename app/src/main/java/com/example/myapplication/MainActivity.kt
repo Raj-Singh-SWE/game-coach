@@ -1,4 +1,4 @@
-﻿package com.example.myapplication
+package com.example.myapplication
 
 // =============================================================================
 // MainActivity.kt — "Gold Light" Phase (Full Feature Build)
@@ -134,7 +134,7 @@ class MainActivity : ComponentActivity() {
                             onEvaluate = { json, health, enemies, ammo, teammates, zone ->
                                 val alert = getTacticalAlert(json)
                                 logEvent(health, enemies, ammo, teammates, zone, alert)
-                                broadcastPacket(json, alert)
+                                broadcastPacket(health, enemies, ammo, teammates, zone, alert)
                                 alert
                             },
                             onViewAnalytics = {
@@ -211,15 +211,18 @@ class MainActivity : ComponentActivity() {
     // WebSocket broadcast helper
     // =========================================================================
 
-    private fun broadcastPacket(gameStateJson: String, alert: String) {
+    private fun broadcastPacket(
+        health: Int, enemies: Int, ammo: Int,
+        teammates: Int, zone: Boolean, alert: String
+    ) {
         val service = broadcastService ?: return
         CoroutineScope(Dispatchers.IO).launch {
-            val trimmed = gameStateJson.trimIndent().trimEnd().trimEnd('}')
-            val escaped = alert.replace("\\", "\\\\").replace("\"", "\\\"")
-            val packet  = """$trimmed,
-  "alert": "$escaped",
-  "ts": ${System.currentTimeMillis()}
-}"""
+            val escapedAlert = alert
+                .replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\n", "\\n")
+                .replace("\r", "")
+            val packet = """{"health":$health,"enemies":$enemies,"zone_collapsing":$zone,"ammo":$ammo,"teammates_alive":$teammates,"alert":"$escapedAlert","ts":${System.currentTimeMillis()}}"""
             service.broadcast(packet)
         }
     }
