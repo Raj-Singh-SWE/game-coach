@@ -1,0 +1,41 @@
+﻿# ─── Android build outputs ────────────────────────────────────────────────────
+*.apk
+*.aab
+*.ap_
+*.dex
+bin/
+gen/
+out/
+build/
+app/build/
+
+# ─── Gradle cache / wrapper binaries ──────────────────────────────────────────
+.gradle/
+gradle/wrapper/gradle-wrapper.jar
+local.properties
+
+# ─── Android Studio IDE files ─────────────────────────────────────────────────
+.idea/
+*.iml
+*.ipr
+*.iws
+captures/
+.navigation/
+*.hprof
+
+# ─── NDK / CMake generated ────────────────────────────────────────────────────
+.cxx/
+*.so
+*.o
+*.a
+CMakeFiles/
+cmake_install.cmake
+Makefile
+
+# ─── Room KSP generated code (re-generated on build) ─────────────────────────
+app/build/generated/
+
+# ─── OS noise ─────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
