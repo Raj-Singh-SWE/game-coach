@@ -1,0 +1,800 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Esports Coach Dashboard — Tactical Co-Pilot</title>
+  <meta name="description" content="Real-time esports coach dashboard that displays live player telemetry and tactical alerts streamed over WebSocket from the Android Tactical Co-Pilot app." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Share+Tech+Mono&family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet" />
+
+  <style>
+    /* ====================================================================== */
+    /* Design Tokens                                                           */
+    /* ====================================================================== */
+    :root {
+      --bg-base:        #070b11;
+      --bg-panel:       #0d1520;
+      --bg-card:        #111a28;
+      --bg-card-hover:  #172032;
+      --border:         rgba(0, 200, 255, 0.12);
+      --border-bright:  rgba(0, 200, 255, 0.35);
+      --cyan:           #00c8ff;
+      --cyan-dim:       rgba(0, 200, 255, 0.15);
+      --green:          #39ff8f;
+      --green-dim:      rgba(57, 255, 143, 0.12);
+      --red:            #ff3b5c;
+      --red-dim:        rgba(255, 59, 92, 0.15);
+      --amber:          #ff9f0a;
+      --amber-dim:      rgba(255, 159, 10, 0.14);
+      --yellow:         #ffe03a;
+      --yellow-dim:     rgba(255, 224, 58, 0.12);
+      --text-primary:   #e8f4ff;
+      --text-secondary: #6b8aaa;
+      --text-muted:     #3d5570;
+      --font-ui:        'Rajdhani', sans-serif;
+      --font-mono:      'Share Tech Mono', monospace;
+      --font-hud:       'Orbitron', sans-serif;
+      --radius-sm:      6px;
+      --radius-md:      12px;
+      --radius-lg:      20px;
+    }
+
+    /* ====================================================================== */
+    /* Reset & Base                                                            */
+    /* ====================================================================== */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      min-height: 100vh;
+      background: var(--bg-base);
+      color: var(--text-primary);
+      font-family: var(--font-ui);
+      font-size: 16px;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* Animated scanline background */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 2px,
+        rgba(0, 200, 255, 0.015) 2px,
+        rgba(0, 200, 255, 0.015) 4px
+      );
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* ====================================================================== */
+    /* Layout                                                                  */
+    /* ====================================================================== */
+    .app-wrapper {
+      position: relative;
+      z-index: 1;
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 0 20px 40px;
+    }
+
+    /* ── Top bar ── */
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 18px 0 14px;
+      border-bottom: 1px solid var(--border);
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .topbar-logo {
+      font-family: var(--font-hud);
+      font-size: 1.3rem;
+      font-weight: 700;
+      letter-spacing: 2px;
+      color: var(--cyan);
+      text-shadow: 0 0 20px rgba(0, 200, 255, 0.6);
+      white-space: nowrap;
+    }
+
+    .topbar-logo span {
+      color: var(--text-secondary);
+      font-weight: 400;
+    }
+
+    .topbar-right {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      flex-wrap: wrap;
+    }
+
+    /* Connection status pill */
+    .conn-pill {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 14px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--bg-panel);
+      font-size: 0.82rem;
+      letter-spacing: 0.5px;
+      font-weight: 600;
+      text-transform: uppercase;
+      transition: border-color 0.3s, background 0.3s;
+    }
+
+    .conn-pill.connected {
+      border-color: rgba(57, 255, 143, 0.4);
+      background: rgba(57, 255, 143, 0.06);
+      color: var(--green);
+    }
+
+    .conn-pill.disconnected {
+      border-color: rgba(255, 59, 92, 0.4);
+      background: rgba(255, 59, 92, 0.06);
+      color: var(--red);
+    }
+
+    .conn-pill.connecting {
+      border-color: rgba(255, 159, 10, 0.4);
+      background: rgba(255, 159, 10, 0.06);
+      color: var(--amber);
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+      flex-shrink: 0;
+    }
+
+    .conn-pill.connected   .status-dot { animation: pulse-green 1.8s ease-in-out infinite; }
+    .conn-pill.disconnected .status-dot { animation: none; opacity: 0.6; }
+    .conn-pill.connecting  .status-dot { animation: pulse-amber 1s ease-in-out infinite; }
+
+    @keyframes pulse-green {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(57, 255, 143, 0.8); opacity: 1; }
+      50%       { box-shadow: 0 0 0 6px rgba(57, 255, 143, 0); opacity: 0.7; }
+    }
+
+    @keyframes pulse-amber {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.4; }
+    }
+
+    /* IP input row */
+    .ip-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .ip-label {
+      font-size: 0.8rem;
+      color: var(--text-secondary);
+      letter-spacing: 0.5px;
+      white-space: nowrap;
+    }
+
+    .ip-input {
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      color: var(--text-primary);
+      border-radius: var(--radius-sm);
+      padding: 6px 10px;
+      font-family: var(--font-mono);
+      font-size: 0.85rem;
+      width: 148px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    .ip-input:focus { border-color: var(--cyan); }
+
+    .ip-connect-btn {
+      padding: 7px 16px;
+      border: none;
+      border-radius: var(--radius-sm);
+      background: var(--cyan);
+      color: #070b11;
+      font-family: var(--font-ui);
+      font-size: 0.88rem;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      cursor: pointer;
+      transition: opacity 0.2s, transform 0.1s;
+      white-space: nowrap;
+    }
+
+    .ip-connect-btn:hover  { opacity: 0.85; }
+    .ip-connect-btn:active { transform: scale(0.97); }
+
+    /* ── Main grid ── */
+    .main-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr 2fr;
+      gap: 16px;
+      margin-top: 20px;
+    }
+
+    @media (max-width: 900px) {
+      .main-grid { grid-template-columns: 1fr 1fr; }
+      .alert-panel { grid-column: 1 / -1; }
+    }
+
+    @media (max-width: 560px) {
+      .main-grid { grid-template-columns: 1fr; }
+    }
+
+    /* ── Stat card ── */
+    .stat-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 22px 20px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      transition: border-color 0.3s, background 0.3s, transform 0.15s;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .stat-card::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(ellipse at 20% 0%, var(--card-glow, transparent) 0%, transparent 60%);
+      pointer-events: none;
+    }
+
+    .stat-card:hover {
+      background: var(--bg-card-hover);
+      border-color: var(--border-bright);
+      transform: translateY(-2px);
+    }
+
+    .stat-card.updated {
+      animation: card-flash 0.4s ease-out;
+    }
+
+    @keyframes card-flash {
+      0%   { background: var(--bg-card-hover); }
+      100% { background: var(--bg-card); }
+    }
+
+    .stat-label {
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: var(--text-secondary);
+    }
+
+    .stat-value {
+      font-family: var(--font-hud);
+      font-size: 3rem;
+      font-weight: 900;
+      line-height: 1;
+      color: var(--stat-color, var(--cyan));
+      text-shadow: 0 0 24px var(--stat-glow, rgba(0, 200, 255, 0.5));
+      transition: color 0.4s, text-shadow 0.4s;
+    }
+
+    .stat-unit {
+      font-size: 1rem;
+      font-weight: 400;
+      color: var(--text-secondary);
+      margin-left: 4px;
+    }
+
+    .stat-sub {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+
+    /* ── Health bar ── */
+    .health-bar-track {
+      height: 6px;
+      background: rgba(255,255,255,0.07);
+      border-radius: 999px;
+      overflow: hidden;
+    }
+
+    .health-bar-fill {
+      height: 100%;
+      border-radius: 999px;
+      transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1), background 0.4s;
+      background: var(--green);
+      box-shadow: 0 0 8px rgba(57, 255, 143, 0.6);
+    }
+
+    /* ── Alert panel ── */
+    .alert-panel {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      min-height: 340px;
+    }
+
+    .alert-panel-header {
+      padding: 16px 20px 14px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-shrink: 0;
+    }
+
+    .alert-panel-title {
+      font-family: var(--font-hud);
+      font-size: 0.85rem;
+      letter-spacing: 2px;
+      color: var(--cyan);
+    }
+
+    .alert-count-badge {
+      font-size: 0.75rem;
+      background: var(--cyan-dim);
+      color: var(--cyan);
+      border: 1px solid rgba(0, 200, 255, 0.3);
+      border-radius: 999px;
+      padding: 2px 10px;
+      font-family: var(--font-mono);
+    }
+
+    .alert-log {
+      flex: 1;
+      overflow-y: auto;
+      padding: 10px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) transparent;
+    }
+
+    .alert-log::-webkit-scrollbar       { width: 4px; }
+    .alert-log::-webkit-scrollbar-track { background: transparent; }
+    .alert-log::-webkit-scrollbar-thumb { background: var(--border); border-radius: 999px; }
+
+    /* Individual alert rows */
+    .alert-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 9px 12px;
+      border-radius: var(--radius-sm);
+      border-left: 3px solid var(--alert-color, var(--text-muted));
+      background: color-mix(in srgb, var(--alert-color, transparent) 8%, var(--bg-panel) 92%);
+      animation: row-enter 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+      opacity: 0;
+      transform: translateX(8px);
+    }
+
+    @keyframes row-enter {
+      to { opacity: 1; transform: translateX(0); }
+    }
+
+    .alert-row.severity-alert   { --alert-color: var(--red);    }
+    .alert-row.severity-warning { --alert-color: var(--amber);  }
+    .alert-row.severity-caution { --alert-color: var(--yellow); }
+    .alert-row.severity-status  { --alert-color: var(--green);  }
+    .alert-row.severity-unknown { --alert-color: var(--text-muted); }
+
+    .alert-time {
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      white-space: nowrap;
+      padding-top: 1px;
+      flex-shrink: 0;
+    }
+
+    .alert-text {
+      font-size: 0.88rem;
+      font-weight: 600;
+      color: var(--alert-color, var(--text-primary));
+      line-height: 1.35;
+    }
+
+    .alert-meta {
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      margin-top: 3px;
+    }
+
+    /* ── Bottom status bar ── */
+    .status-bar {
+      margin-top: 20px;
+      padding: 10px 16px;
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 10px;
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+    }
+
+    .status-bar span { color: var(--text-secondary); }
+
+    /* ── Empty state ── */
+    .empty-state {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      color: var(--text-muted);
+      font-size: 0.88rem;
+    }
+
+    .empty-state-icon {
+      font-size: 2rem;
+      opacity: 0.4;
+    }
+
+    /* ── Timestamp ── */
+    .last-update {
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      color: var(--text-muted);
+    }
+  </style>
+</head>
+
+<body>
+<div class="app-wrapper">
+
+  <!-- ── Top bar ──────────────────────────────────────────────────────────── -->
+  <header class="topbar">
+    <div class="topbar-logo">TACTICAL <span>CO-PILOT</span> COACH DASHBOARD</div>
+
+    <div class="topbar-right">
+      <div class="ip-bar">
+        <span class="ip-label">PHONE IP</span>
+        <input
+          id="ip-input"
+          class="ip-input"
+          type="text"
+          placeholder="192.168.1.x"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <button class="ip-connect-btn" id="connect-btn" onclick="connectWs()">CONNECT</button>
+      </div>
+
+      <div class="conn-pill disconnected" id="conn-pill">
+        <div class="status-dot"></div>
+        <span id="conn-label">DISCONNECTED</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ── Stat grid ─────────────────────────────────────────────────────────── -->
+  <main class="main-grid" id="main-grid">
+
+    <!-- Health card -->
+    <div class="stat-card" id="card-health" style="--card-glow: rgba(57,255,143,0.06);">
+      <div class="stat-label">❤ Health</div>
+      <div>
+        <span class="stat-value" id="stat-health" style="--stat-color: #39ff8f; --stat-glow: rgba(57,255,143,0.5);">—</span>
+        <span class="stat-unit" id="health-unit"></span>
+      </div>
+      <div class="health-bar-track">
+        <div class="health-bar-fill" id="health-bar" style="width: 0%;"></div>
+      </div>
+      <div class="stat-sub" id="health-status">Awaiting data...</div>
+    </div>
+
+    <!-- Enemies card -->
+    <div class="stat-card" id="card-enemies" style="--card-glow: rgba(255,59,92,0.06);">
+      <div class="stat-label">☠ Nearby Enemies</div>
+      <div>
+        <span class="stat-value" id="stat-enemies" style="--stat-color: #ff3b5c; --stat-glow: rgba(255,59,92,0.5);">—</span>
+      </div>
+      <div class="stat-sub" id="enemies-status">Awaiting data...</div>
+    </div>
+
+    <!-- Alert log (spans remaining columns) -->
+    <div class="alert-panel alert-panel" id="alert-panel-wrap">
+      <div class="alert-panel-header">
+        <div class="alert-panel-title">◈ TACTICAL ALERT LOG</div>
+        <div class="alert-count-badge" id="alert-count">0 ALERTS</div>
+      </div>
+      <div class="alert-log" id="alert-log">
+        <div class="empty-state" id="empty-state">
+          <div class="empty-state-icon">📡</div>
+          <div>Connect to the Android device to receive alerts</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Ammo card -->
+    <div class="stat-card" id="card-ammo" style="--card-glow: rgba(255,224,58,0.05);">
+      <div class="stat-label">⚡ Ammunition</div>
+      <div>
+        <span class="stat-value" id="stat-ammo" style="--stat-color: #ffe03a; --stat-glow: rgba(255,224,58,0.4);">—</span>
+        <span class="stat-unit" id="ammo-unit"></span>
+      </div>
+      <div class="stat-sub" id="ammo-status">Awaiting data...</div>
+    </div>
+
+    <!-- Teammates card -->
+    <div class="stat-card" id="card-teammates" style="--card-glow: rgba(0,200,255,0.05);">
+      <div class="stat-label">🛡 Teammates Alive</div>
+      <div>
+        <span class="stat-value" id="stat-teammates" style="--stat-color: #00c8ff; --stat-glow: rgba(0,200,255,0.5);">—</span>
+        <span class="stat-unit" id="teammates-unit">/ 4</span>
+      </div>
+      <div class="stat-sub" id="teammates-status">Awaiting data...</div>
+    </div>
+
+  </main>
+
+  <!-- ── Status bar ─────────────────────────────────────────────────────────── -->
+  <footer class="status-bar">
+    <div>ENDPOINT: <span id="ws-endpoint">ws://—:8080/ws</span></div>
+    <div>PACKETS: <span id="packet-count">0</span></div>
+    <div class="last-update">LAST UPDATE: <span id="last-update">—</span></div>
+    <div>ENGINE: <span>C++ / JNI</span></div>
+  </footer>
+
+</div>
+
+<script>
+// ===========================================================================
+// Coach Dashboard — WebSocket Client Logic
+// ===========================================================================
+
+let ws            = null;
+let alertCount    = 0;
+let packetCount   = 0;
+let reconnectTimer= null;
+const MAX_ALERTS  = 60;   // Keep last 60 alerts in the log
+
+// ── Restore last-used IP from localStorage ──────────────────────────────────
+(function initIp() {
+  const saved = localStorage.getItem('coach_ws_ip');
+  if (saved) document.getElementById('ip-input').value = saved;
+})();
+
+// ── Severity classification ─────────────────────────────────────────────────
+function classifyAlert(text) {
+  if (!text) return 'unknown';
+  if (text.startsWith('ALERT:'))   return 'alert';
+  if (text.startsWith('WARNING:')) return 'warning';
+  if (text.startsWith('CAUTION:')) return 'caution';
+  if (text.startsWith('STATUS:'))  return 'status';
+  return 'unknown';
+}
+
+function alertEmoji(severity) {
+  return { alert: '🔴', warning: '🟠', caution: '🟡', status: '🟢', unknown: '⚪' }[severity] || '⚪';
+}
+
+// ── Connection UI helpers ───────────────────────────────────────────────────
+function setConnState(state) {           // 'connected' | 'disconnected' | 'connecting'
+  const pill  = document.getElementById('conn-pill');
+  const label = document.getElementById('conn-label');
+  pill.className = 'conn-pill ' + state;
+  label.textContent = state.toUpperCase();
+}
+
+// ── Flash a stat card to highlight an update ────────────────────────────────
+function flashCard(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.classList.remove('updated');
+  void el.offsetWidth;   // force reflow so the animation restarts
+  el.classList.add('updated');
+}
+
+// ── Format HH:MM:SS from a millis timestamp ──────────────────────────────────
+function fmtTime(ms) {
+  const d = new Date(ms);
+  return d.toTimeString().slice(0, 8);
+}
+
+// ── Apply incoming telemetry packet to the UI ──────────────────────────────
+function applyPacket(data) {
+  const { health, enemies, zone_collapsing, ammo, teammates_alive, alert, ts } = data;
+
+  // Health
+  const hp = health ?? 0;
+  const hpEl = document.getElementById('stat-health');
+  const hpBar = document.getElementById('health-bar');
+  const hpSub = document.getElementById('health-status');
+  hpEl.textContent = hp;
+  document.getElementById('health-unit').textContent = 'HP';
+  hpBar.style.width = Math.min(100, hp) + '%';
+  if (hp <= 20) {
+    hpBar.style.background = '#ff3b5c';
+    hpBar.style.boxShadow  = '0 0 10px rgba(255,59,92,0.7)';
+    hpEl.style.setProperty('--stat-color', '#ff3b5c');
+    hpEl.style.setProperty('--stat-glow', 'rgba(255,59,92,0.6)');
+    hpSub.textContent = '⚠ CRITICAL — RETREAT NOW';
+  } else if (hp <= 50) {
+    hpBar.style.background = '#ff9f0a';
+    hpBar.style.boxShadow  = '0 0 10px rgba(255,159,10,0.6)';
+    hpEl.style.setProperty('--stat-color', '#ff9f0a');
+    hpEl.style.setProperty('--stat-glow', 'rgba(255,159,10,0.5)');
+    hpSub.textContent = '⚡ LOW HEALTH';
+  } else {
+    hpBar.style.background = '#39ff8f';
+    hpBar.style.boxShadow  = '0 0 8px rgba(57,255,143,0.6)';
+    hpEl.style.setProperty('--stat-color', '#39ff8f');
+    hpEl.style.setProperty('--stat-glow', 'rgba(57,255,143,0.5)');
+    hpSub.textContent = 'Combat ready';
+  }
+  flashCard('card-health');
+
+  // Enemies
+  const en = enemies ?? 0;
+  const enEl = document.getElementById('stat-enemies');
+  enEl.textContent = en;
+  document.getElementById('enemies-status').textContent =
+    en === 0 ? 'Area clear' : en >= 3 ? `${en} hostiles — high threat` : `${en} hostile${en>1?'s':''} spotted`;
+  if (en >= 3) {
+    enEl.style.setProperty('--stat-color', '#ff3b5c');
+    enEl.style.setProperty('--stat-glow', 'rgba(255,59,92,0.6)');
+  } else if (en >= 1) {
+    enEl.style.setProperty('--stat-color', '#ff9f0a');
+    enEl.style.setProperty('--stat-glow', 'rgba(255,159,10,0.5)');
+  } else {
+    enEl.style.setProperty('--stat-color', '#39ff8f');
+    enEl.style.setProperty('--stat-glow', 'rgba(57,255,143,0.4)');
+  }
+  flashCard('card-enemies');
+
+  // Ammo
+  const am = ammo ?? 0;
+  document.getElementById('stat-ammo').textContent = am;
+  document.getElementById('ammo-unit').textContent = 'rds';
+  const amSub = document.getElementById('ammo-status');
+  const amEl  = document.getElementById('stat-ammo');
+  if (am <= 10) {
+    amEl.style.setProperty('--stat-color', '#ff3b5c');
+    amSub.textContent = '⚠ CRITICAL — FIND SUPPLIES';
+  } else if (am <= 30) {
+    amEl.style.setProperty('--stat-color', '#ffe03a');
+    amSub.textContent = 'Low — conserve ammo';
+  } else {
+    amEl.style.setProperty('--stat-color', '#ffe03a');
+    amSub.textContent = 'Sufficient';
+  }
+  flashCard('card-ammo');
+
+  // Teammates
+  const tm = teammates_alive ?? 0;
+  document.getElementById('stat-teammates').textContent = tm;
+  document.getElementById('teammates-unit').textContent = '/ 4';
+  document.getElementById('teammates-status').textContent =
+    tm === 0 ? 'Squad eliminated' : tm === 1 ? 'Solo — squad down' : `${tm} squad members active`;
+  flashCard('card-teammates');
+
+  // Alert log entry
+  if (alert) {
+    const severity = classifyAlert(alert);
+    const log = document.getElementById('alert-log');
+
+    // Remove empty state on first packet
+    const emptyEl = document.getElementById('empty-state');
+    if (emptyEl) emptyEl.remove();
+
+    // Build alert row
+    const row = document.createElement('div');
+    row.className = `alert-row severity-${severity}`;
+    row.innerHTML = `
+      <div class="alert-time">${fmtTime(ts || Date.now())}</div>
+      <div>
+        <div class="alert-text">${alertEmoji(severity)} ${escHtml(alert)}</div>
+        <div class="alert-meta">hp:${hp} en:${en} ammo:${am} zone:${zone_collapsing ? 'YES' : 'no'}</div>
+      </div>`;
+
+    // Prepend (newest at top)
+    log.insertBefore(row, log.firstChild);
+
+    // Trim old entries
+    alertCount++;
+    while (log.children.length > MAX_ALERTS) {
+      log.removeChild(log.lastChild);
+    }
+    document.getElementById('alert-count').textContent =
+      alertCount + (alertCount === 1 ? ' ALERT' : ' ALERTS');
+  }
+
+  // Status bar
+  packetCount++;
+  document.getElementById('packet-count').textContent = packetCount;
+  document.getElementById('last-update').textContent  = fmtTime(ts || Date.now());
+}
+
+// ── HTML escape ──────────────────────────────────────────────────────────────
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── WebSocket connect / reconnect ────────────────────────────────────────────
+function connectWs() {
+  const ip = document.getElementById('ip-input').value.trim();
+  if (!ip) { alert('Please enter the phone IP address.'); return; }
+
+  localStorage.setItem('coach_ws_ip', ip);
+  const url = `ws://${ip}:8080/ws`;
+  document.getElementById('ws-endpoint').textContent = url;
+
+  if (ws) {
+    ws.onclose = null;   // prevent reconnect loop when we manually disconnect
+    ws.close();
+  }
+  clearTimeout(reconnectTimer);
+
+  setConnState('connecting');
+
+  ws = new WebSocket(url);
+
+  ws.onopen = () => {
+    setConnState('connected');
+    console.log('[Dashboard] WebSocket connected to', url);
+  };
+
+  ws.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      applyPacket(data);
+    } catch (e) {
+      console.warn('[Dashboard] Failed to parse packet:', e, event.data);
+    }
+  };
+
+  ws.onerror = (err) => {
+    console.error('[Dashboard] WebSocket error:', err);
+    setConnState('disconnected');
+  };
+
+  ws.onclose = () => {
+    setConnState('disconnected');
+    console.log('[Dashboard] Disconnected — retrying in 3s...');
+    reconnectTimer = setTimeout(connectWs, 3000);
+  };
+}
+
+// ── Auto-connect on load if IP already saved ─────────────────────────────────
+window.addEventListener('DOMContentLoaded', () => {
+  const saved = localStorage.getItem('coach_ws_ip');
+  if (saved) {
+    setTimeout(connectWs, 600);  // slight delay so the page renders first
+  }
+});
+
+// ── Connect on Enter in IP field ─────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('ip-input').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') connectWs();
+  });
+});
+</script>
+</body>
+</html>
